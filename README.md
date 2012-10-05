@@ -3,7 +3,7 @@ Yet Another Beerduino
 
 An Arduino-Based solution to control a freezer for brewing / fermenting
 
-Currently, most development is being done in Aquadunio
+Currently, most development is being done in Aquariduino
 (see: https://github.com/m00dawg/Aquariduino). The two projects are fairly
 similar and it is easier to test functionality with Aquaduino. As such,
 new work will happen there for a while and will be back-ported to this project.
