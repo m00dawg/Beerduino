@@ -1,11 +1,13 @@
 /*
-  YAB (Yet Another Beerduino)
+  Yet Another Beerduino v0.30
+  By: Tim Soderstrom
 
   Pins used:
-    Fridge: 12
-    LCD/Button 1 Wire Bus: 2
+    Fridge Relay: A0
+    LCD Shield: Analog Pins 4 & 5 (I2C Bus)
+    Temperature 1 Wire Bus: 2
 */
- 
+
 #include <Wire.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -17,6 +19,12 @@
 //#include <Ethernet.h>
 //#include <WiFi.h>
 
+/*
+ * -------
+ * DEFINES
+ * ------- 
+ */
+
 /* LCD Colors */
 #define RED 0x1
 #define YELLOW 0x3
@@ -26,155 +34,312 @@
 #define VIOLET 0x5
 #define WHITE 0x7
 
-/* One wire bus pin */
-#define ONE_WIRE_BUS 2
-
-/* Fridge States */
+/* States */
 #define ON 1
 #define OFF 0
 
-/* Initialize LCD object */
+/* 
+ * ---------
+ * CONSTANTS
+ * ---------
+ */
+ 
+const int second = 1000;
+
+/* LCD */
+const int lcdColumns = 16;
+const int lcdRows = 2;
+const int maxPage = 4;
+ 
+ /* Pins */
+const int temperatureProbes = 7;
+const int fridgePin = A0;
+
+/* Polling and update timeouts */
+const int sensorPollingInterval = 5;
+const int lcdUpdateInterval = 5;
+const int alertTimeout = 5;
+
+/* 
+   Temperature range to cycle fridge in Celsius
+   lowTemp = Temp reached before fridge turns on
+   highTemp = Temp reached before fridge turns off
+   alertHighTemp = Tank too hot even with fridge off
+   alertLowTemp = Tank too cold even with fridge on
+*/
+const float lowTemp = 25;
+const float highTemp = 30;
+const float alertHighTemp = 32;
+const float alertLowTemp = 23;
+
+/*
+ * -------
+ * OBJECTS
+ * ------- 
+ */
+
+// LCD Object
 Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
-OneWire oneWire(ONE_WIRE_BUS);
+OneWire oneWire(temperatureProbes);
 
 // Pass our oneWire reference to Dallas Temperature. 
 DallasTemperature sensors(&oneWire);
 
-// Arrays to hold temp devices 
+// Arrays to hold temperature devices 
 // DeviceAddress insideThermometer, outsideThermometer;
-DeviceAddress fridgeThermometer;
+DeviceAddress tankThermometer;
 
-/* Define Fridge AC Relay Control Pin */
-const int fridgePin = 12;
 
-/* Temp sesnor polling interval (seconds) and display hold time */
-const int pollingInterval = 5;
-
-/* 
-   Temperature range to cycle fridge in Celsius
-   lowTemp = Temp reached to turn fridge off
-   highTemp = Temp reached to turn fridge on
+/*
+ * ----------------
+ * STATUS VARIABLES
+ * ----------------
 */
-const int lowTemp = 25;
-const int highTemp = 30;
-
-/* Variables to keep track of stuff */
 
 /* Number of milliseconds since bootup */
 unsigned long currentMillis = 0;
-unsigned long previousMillis = 0;
 
-/* Number of times the fridge has been cycled (off to on) */
-int cycles = 0;
-int fridgeState = 0;
+/* Poll Timeouts for various things */
+unsigned long lastSensorPoll = 0;
+unsigned long lastLCDUpdate = 0;
 
 /* Min and max temperatures seen */
-int maxTemp = 0;
-int minTemp = 0;
+float maxTemp = 0;
+float minTemp = 100;
+float currentTemp = 0;
+
+/* LCD Status Variables */
+boolean clearLCD = FALSE;
+boolean backlight = TRUE;
+int backlightColor = WHITE;
+int page = 0;
+
+/* fridge Status */
+boolean fridge = FALSE;
+int fridgeCycles = 0;
 
 /* Variable to store buttons */
 uint8_t buttons = 0;
 
-void setup() {
-  // set up the LCD's number of columns and rows: 
-  lcd.begin(16, 2);
+char serialInput = '\0';
 
-  /* Turn off relay to Fridge */
+void setup()
+{ 
+  Serial.begin(9600); 
+
+  // set up the LCD's number of columns and rows: 
+  lcd.begin(lcdColumns, lcdRows);
+
+  /* Turn off fridge, since we don't know what's going on until
+      we poll the temperature sensor */
   pinMode(fridgePin, OUTPUT);
   digitalWrite(fridgePin, LOW);
+
+  /* Print Title and Version */
+  lcd.setBacklight(WHITE);
+  lcd.setCursor(0,0);
+  lcd.print("Beerduino");
+  lcd.setCursor(0,1);
+  lcd.print("v0.30");
+  delay(2000);
+  lcd.clear();
   
   // Initialize Temp Sensor Library
   sensors.begin();
-
-  // Find some sensors
-  if (!sensors.getAddress(fridgeThermometer, 0)) 
-  {
-    lcd.print("NO TEMP SENSORS");
-    for(int count = 0; count < 5; ++count)
-    {
-      lcd.setBacklight(RED);
-      delay(500);
-      lcd.setBacklight(BLUE);
-      delay(500); 
-    }
-  }
-  lcd.setBacklight(WHITE);
-  lcd.clear();
 }
 
-void loop() {
+void loop()
+{
   buttons = lcd.readButtons(); 
-  
-  /* Get some temperature readings and do stuff */
+
   currentMillis = millis();
-  if(currentMillis - previousMillis > pollingInterval * 1000)
+  
+  /* If it's been longer than the polling interval, poll sensors */
+  if(currentMillis - lastSensorPoll > sensorPollingInterval * second)
   {
-    previousMillis = currentMillis;
-    sensors.requestTemperatures();
-    lcd.clear();
-    if(sensors.getAddress(fridgeThermometer, 0))
-    {
-      /* Check to see if we hit a new low or high temp */
-      if(sensors.getTempC(fridgeThermometer) > maxTemp)
-        maxTemp = sensors.getTempC(fridgeThermometer);
-      if(sensors.getTempC(fridgeThermometer) < minTemp)
-        minTemp = sensors.getTempC(fridgeThermometer);
-      
-      lcd.print(sensors.getTempC(fridgeThermometer));
-      lcd.setCursor(0,0);
-      lcd.print("Temp: ");
-      lcd.print(sensors.getTempC(fridgeThermometer));
-      lcd.print("C");
-      /* If temperature is too high, turn on the fridge */
-      if(sensors.getTempC(fridgeThermometer) > highTemp)
-      {
-        if(fridgeState == OFF)
-          ++cycles;
-        digitalWrite(fridgePin, HIGH);
-        fridgeState = ON;
-        lcd.setCursor(0,1);
-        lcd.print("Fridge On");
-        lcd.setBacklight(BLUE);
-      }
-      /* If the temperature is too low, turn off the fridge */
-      else if(sensors.getTempC(fridgeThermometer) < lowTemp)
-      {
-        digitalWrite(fridgePin, LOW);
-        fridgeState = OFF;
-        lcd.setCursor(0,1);
-        lcd.print("Fridge Off");
-        lcd.setBacklight(GREEN);
-      }    
-    }
+    if(collectTemperatures())
+      controlFridge();  
     else
-    {
-      lcd.setBacklight(RED);
-      displayInfo("NO TEMP SENSORS", "");
-    }
+      error("NO SENSORS");
+    lastSensorPoll = currentMillis;
   }
   
   /* Process button input */
   if (buttons)
   {
     if (buttons & BUTTON_LEFT)
-      displayInfo("CFG Temp Range:", String(lowTemp) + "-" + String(highTemp) + " C");
+    {
+      --page;
+      if(page < 0)
+        page = maxPage; 
+    }
     if (buttons & BUTTON_RIGHT)
-      displayInfo("Min/Max Temps:", String(minTemp) + "-" + String(maxTemp) + " C");
-    if (buttons & BUTTON_UP)
-      displayInfo("Fridge Cycles:", String(cycles));
-    if (buttons & BUTTON_DOWN)
-      displayInfo("Uptime (Secs):", String(millis() / 1000));
+    {
+      ++page;
+      if(page > maxPage)
+        page = 0;
+    }
+    if (buttons & BUTTON_SELECT)
+    {
+      if(backlight)
+      {
+        lcd.setBacklight(OFF);
+        backlight = false;
+        delay(second);
+      }
+      else
+      {
+        lcd.setBacklight(backlightColor);
+        backlight = true;
+        delay(second);   
+      }
+    }
+    else
+    {
+      switch(page)
+      {
+        case 0:
+        {
+          displayInfo("Min/Max Temps:", String(floatToString(minTemp)) + "-" + String(floatToString(maxTemp)) + " C");
+          break;
+        }
+        case 1:
+        {
+          displayInfo("Alert Temps:", String(floatToString(alertLowTemp)) + "-" + String(floatToString(alertHighTemp)) + " C");
+          break; 
+        }
+        case 2:
+        {
+          displayInfo("Temp Range:", String(floatToString(lowTemp)) + "-" + String(floatToString(highTemp)) + " C");
+          break; 
+        }
+        case 3:
+        {
+          displayInfo("Uptime (Secs):", String(millis() / second));
+          break; 
+        }
+        case 4:
+        {
+          displayInfo("Fridge Cycles:", String(fridgeCycles));
+          break;
+        }
+      }
+    }
+    lastLCDUpdate = millis();
+    clearLCD = true;
+  }
+  
+  /* Regular Display Routine */
+  else if(currentMillis - lastLCDUpdate > lcdUpdateInterval * second)
+  {
+    if(backlight)
+    {
+      if(currentTemp > alertHighTemp)
+        lcd.setBacklight(RED);
+      else if(currentTemp >= highTemp)
+        lcd.setBacklight(YELLOW);
+      else if(currentTemp > lowTemp && currentTemp < highTemp)
+        lcd.setBacklight(GREEN);
+      else if(currentTemp <= lowTemp)
+        lcd.setBacklight(VIOLET);
+      else if(currentTemp < alertLowTemp)
+        lcd.setBacklight(BLUE);
+    }   
+    if(fridge)
+      displayInfo("Temp: " + String(floatToString(currentTemp)) + " C", "fridge On");
+    else
+      displayInfo("Temp: " + String(floatToString(currentTemp)) + " C", "fridge Off");
+    lastLCDUpdate = millis();
   }
 }
 
-void displayInfo(String topText, String bottomText)
+void serialEvent()
 {
-  lcd.clear();
-  previousMillis = millis();
+  while(Serial.available() > 0)
+     serialInput = Serial.read(); 
+  if(serialInput == 'P')
+  {
+    serialInput = '\0';
+    Serial.print("Temp:");
+    Serial.print(currentTemp, DEC);
+    Serial.print(" Fridge:");
+    Serial.println(fridge, DEC);
+  }  
+}
+
+void displayInfo(String topText, String bottomText)
+{  
+  if(clearLCD)
+  {
+    lcd.clear();
+    clearLCD = false;
+  }
   lcd.setCursor(0,0);
-  lcd.print(topText);
+  lcd.print(padString(topText));
   lcd.setCursor(0,1);
-  lcd.print(bottomText);
+  lcd.print(padString(bottomText));
+}
+
+String padString(String value)
+{
+  char padding[lcdColumns - value.length()];
+  for(int count = 0; count < sizeof(padding); ++count)
+    padding[count] = ' ';
+  return String(value) + String(padding);
+}
+
+String floatToString(float value)
+{
+  char result[13];
+  dtostrf(value, 4, 1, result);
+  return result;
+}
+
+boolean collectTemperatures()
+{
+  sensors.requestTemperatures();
+  if(sensors.getAddress(tankThermometer, 0))
+  {
+    currentTemp = sensors.getTempC(tankThermometer);
+    /* Check to see if we hit a new low or high temp */
+    if(currentTemp > maxTemp)
+      maxTemp = currentTemp;
+    if(currentTemp < minTemp)
+      minTemp = currentTemp;
+    return true;
+  }
+  return false;
+}
+
+void controlFridge()
+{
+    /* If temperature is too high, turn on fridge */
+    if(currentTemp > highTemp)
+    {
+      digitalWrite(fridgePin, HIGH);
+      fridge = true;
+      return;
+    }
+    /* If the temperature is too low, turn off fridge */
+    if(currentTemp < lowTemp)
+    {
+      digitalWrite(fridgePin, LOW);
+      if(fridge)
+        ++fridgeCycles;
+      fridge = false;
+    }
+}
+
+void error(String message)
+{
+    displayInfo("**** ERROR ****", message);
+    for(int count = 0; count < alertTimeout; ++count)
+    {
+      lcd.setBacklight(RED);
+      delay(second);
+      lcd.setBacklight(BLUE);
+      delay(second);
+    }
 }
