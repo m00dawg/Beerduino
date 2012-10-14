@@ -1,5 +1,5 @@
 /*
-  Yet Another Beerduino v0.30
+  Yet Another Beerduino v1.05
   By: Tim Soderstrom
 
   Pins used:
@@ -52,7 +52,7 @@ const int lcdRows = 2;
 const int maxPage = 4;
  
  /* Pins */
-const int temperatureProbes = 7;
+const int temperatureProbes = 2;
 const int fridgePin = A0;
 
 /* Polling and update timeouts */
@@ -67,10 +67,12 @@ const int alertTimeout = 5;
    alertHighTemp = Tank too hot even with fridge off
    alertLowTemp = Tank too cold even with fridge on
 */
-const float lowTemp = 25;
-const float highTemp = 30;
-const float alertHighTemp = 32;
-const float alertLowTemp = 23;
+
+// Autumn Amber Ale
+const float lowTemp = 18; //64.4F
+const float highTemp = 21; //69.8F
+const float alertLowTemp = 17; //62.6F
+const float alertHighTemp = 24; //71.6F
 
 /*
  * -------
@@ -125,9 +127,12 @@ uint8_t buttons = 0;
 
 char serialInput = '\0';
 
+boolean displayCelsius = true;
+String currentTempDisplay;
+
 void setup()
 { 
-  Serial.begin(9600); 
+//  Serial.begin(9600); 
 
   // set up the LCD's number of columns and rows: 
   lcd.begin(lcdColumns, lcdRows);
@@ -138,11 +143,11 @@ void setup()
   digitalWrite(fridgePin, LOW);
 
   /* Print Title and Version */
-  lcd.setBacklight(WHITE);
+  lcd.setBacklight(YELLOW);
   lcd.setCursor(0,0);
-  lcd.print("Beerduino");
+  lcd.print("YABeerduino");
   lcd.setCursor(0,1);
-  lcd.print("v0.30");
+  lcd.print("v1.05");
   delay(2000);
   lcd.clear();
   
@@ -169,6 +174,13 @@ void loop()
   /* Process button input */
   if (buttons)
   {
+    if (buttons & BUTTON_UP)
+    {
+      if(displayCelsius)
+        displayCelsius = false;
+      else
+        displayCelsius = true;
+    }
     if (buttons & BUTTON_LEFT)
     {
       --page;
@@ -230,7 +242,7 @@ void loop()
     lastLCDUpdate = millis();
     clearLCD = true;
   }
-  
+
   /* Regular Display Routine */
   else if(currentMillis - lastLCDUpdate > lcdUpdateInterval * second)
   {
@@ -242,19 +254,24 @@ void loop()
         lcd.setBacklight(YELLOW);
       else if(currentTemp > lowTemp && currentTemp < highTemp)
         lcd.setBacklight(GREEN);
-      else if(currentTemp <= lowTemp)
+      else if(currentTemp <= lowTemp && currentTemp > alertLowTemp)
         lcd.setBacklight(VIOLET);
-      else if(currentTemp < alertLowTemp)
+      else if(currentTemp <= alertLowTemp)
         lcd.setBacklight(BLUE);
-    }   
-    if(fridge)
-      displayInfo("Temp: " + String(floatToString(currentTemp)) + " C", "fridge On");
+    }
+    if(displayCelsius)
+      currentTempDisplay = "Temp: " + String(floatToString(currentTemp)) + "C";
     else
-      displayInfo("Temp: " + String(floatToString(currentTemp)) + " C", "fridge Off");
+      currentTempDisplay = "Temp: " + String(floatToString(sensors.toFahrenheit(currentTemp))) + "F";
+    if(fridge)
+      displayInfo(currentTempDisplay, "Fridge On");
+    else
+      displayInfo(currentTempDisplay, "Fridge Off");
     lastLCDUpdate = millis();
   }
 }
 
+/*
 void serialEvent()
 {
   while(Serial.available() > 0)
@@ -268,6 +285,7 @@ void serialEvent()
     Serial.println(fridge, DEC);
   }  
 }
+*/
 
 void displayInfo(String topText, String bottomText)
 {  
