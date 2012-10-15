@@ -69,10 +69,10 @@ const int alertTimeout = 5;
 */
 
 // Autumn Amber Ale
-const float lowTemp = 18; //64.4F
-const float highTemp = 21; //69.8F
-const float alertLowTemp = 17; //62.6F
-const float alertHighTemp = 24; //71.6F
+const float lowTemp = 20.2; //68.4F
+const float highTemp = 20.8; //69.5F
+const float alertLowTemp = 17.7; //64F
+const float alertHighTemp = 21.1; //69.98F
 
 /*
  * -------
